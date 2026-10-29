@@ -8,97 +8,152 @@
 # Replication is set up like production (RF 3, min.insync.replicas 2), so one broker can be
 # stopped and everything keeps working - try it.
 #
+# Every service is written out in full (no YAML anchors), so each one can be read on its own.
+# The three controllers differ only in KAFKA_NODE_ID; the three brokers differ only in
+# KAFKA_NODE_ID, the EXTERNAL port and the advertised host name.
+#
 #   docker compose -f lab/docker-compose.yml up -d        (or: cd lab && docker compose up -d)
 #   docker compose -f lab/docker-compose.yml down -v      (-v also wipes all data)
 
 name: sr-lab
 
-x-common-env: &common-env
-  CLUSTER_ID: ${CLUSTER_ID}
-  KAFKA_CONTROLLER_QUORUM_VOTERS: 1@controller-1:9093,2@controller-2:9093,3@controller-3:9093
-  KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-
-x-controller: &controller
-  image: confluentinc/cp-kafka:${CP_VERSION}
-  restart: unless-stopped
-  environment: &controller-env
-    <<: *common-env
-    KAFKA_PROCESS_ROLES: controller
-    KAFKA_LISTENERS: CONTROLLER://:9093
-    KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT
-    # controllers only hold the metadata log - a small heap is plenty
-    KAFKA_HEAP_OPTS: -Xms256m -Xmx384m
-
-x-broker: &broker
-  image: confluentinc/cp-kafka:${CP_VERSION}
-  restart: unless-stopped
-  depends_on: [controller-1, controller-2, controller-3]
-  healthcheck:
-    test: kafka-broker-api-versions --bootstrap-server localhost:29092 > /dev/null 2>&1
-    interval: 5s
-    timeout: 10s
-    retries: 30
-  environment: &broker-env
-    <<: *common-env
-    KAFKA_PROCESS_ROLES: broker
-    # INTERNAL: other containers (brokers, schema-registry, kafka-ui)   EXTERNAL: your laptop
-    KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
-    KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
-    KAFKA_DEFAULT_REPLICATION_FACTOR: 3
-    KAFKA_MIN_INSYNC_REPLICAS: 2
-    KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
-    KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
-    KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
-    # like most production clusters: topics are created on purpose, not by a typo
-    KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
-    KAFKA_HEAP_OPTS: -Xms512m -Xmx512m
-
 services:
   controller-1:
-    <<: *controller
+    image: confluentinc/cp-kafka:${CP_VERSION}
     container_name: controller-1
-    environment: { <<: *controller-env, KAFKA_NODE_ID: 1 }
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: controller
+      CLUSTER_ID: ${CLUSTER_ID}
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@controller-1:9093,2@controller-2:9093,3@controller-3:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: CONTROLLER://:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT
+      # controllers only hold the metadata log - a small heap is plenty
+      KAFKA_HEAP_OPTS: -Xms256m -Xmx384m
     volumes: [controller-1:/var/lib/kafka/data]
+
   controller-2:
-    <<: *controller
+    image: confluentinc/cp-kafka:${CP_VERSION}
     container_name: controller-2
-    environment: { <<: *controller-env, KAFKA_NODE_ID: 2 }
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 2
+      KAFKA_PROCESS_ROLES: controller
+      CLUSTER_ID: ${CLUSTER_ID}
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@controller-1:9093,2@controller-2:9093,3@controller-3:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: CONTROLLER://:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT
+      KAFKA_HEAP_OPTS: -Xms256m -Xmx384m
     volumes: [controller-2:/var/lib/kafka/data]
+
   controller-3:
-    <<: *controller
+    image: confluentinc/cp-kafka:${CP_VERSION}
     container_name: controller-3
-    environment: { <<: *controller-env, KAFKA_NODE_ID: 3 }
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 3
+      KAFKA_PROCESS_ROLES: controller
+      CLUSTER_ID: ${CLUSTER_ID}
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@controller-1:9093,2@controller-2:9093,3@controller-3:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: CONTROLLER://:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT
+      KAFKA_HEAP_OPTS: -Xms256m -Xmx384m
     volumes: [controller-3:/var/lib/kafka/data]
 
   broker-1:
-    <<: *broker
+    image: confluentinc/cp-kafka:${CP_VERSION}
     container_name: broker-1
+    restart: unless-stopped
+    depends_on: [controller-1, controller-2, controller-3]
     ports: ["9092:9092"]
+    healthcheck:
+      test: kafka-broker-api-versions --bootstrap-server localhost:29092 > /dev/null 2>&1
+      interval: 5s
+      timeout: 10s
+      retries: 30
     environment:
-      <<: *broker-env
       KAFKA_NODE_ID: 4
+      KAFKA_PROCESS_ROLES: broker
+      CLUSTER_ID: ${CLUSTER_ID}
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@controller-1:9093,2@controller-2:9093,3@controller-3:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      # INTERNAL: other containers (brokers, schema-registry, kafka-ui)   EXTERNAL: your laptop
       KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:9092
       KAFKA_ADVERTISED_LISTENERS: INTERNAL://broker-1:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      # like most production clusters: topics are created on purpose, not by a typo
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_HEAP_OPTS: -Xms512m -Xmx512m
     volumes: [broker-1:/var/lib/kafka/data]
+
   broker-2:
-    <<: *broker
+    image: confluentinc/cp-kafka:${CP_VERSION}
     container_name: broker-2
+    restart: unless-stopped
+    depends_on: [controller-1, controller-2, controller-3]
     ports: ["9093:9093"]
+    healthcheck:
+      test: kafka-broker-api-versions --bootstrap-server localhost:29092 > /dev/null 2>&1
+      interval: 5s
+      timeout: 10s
+      retries: 30
     environment:
-      <<: *broker-env
       KAFKA_NODE_ID: 5
+      KAFKA_PROCESS_ROLES: broker
+      CLUSTER_ID: ${CLUSTER_ID}
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@controller-1:9093,2@controller-2:9093,3@controller-3:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:9093
       KAFKA_ADVERTISED_LISTENERS: INTERNAL://broker-2:29092,EXTERNAL://localhost:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_HEAP_OPTS: -Xms512m -Xmx512m
     volumes: [broker-2:/var/lib/kafka/data]
+
   broker-3:
-    <<: *broker
+    image: confluentinc/cp-kafka:${CP_VERSION}
     container_name: broker-3
+    restart: unless-stopped
+    depends_on: [controller-1, controller-2, controller-3]
     ports: ["9094:9094"]
+    healthcheck:
+      test: kafka-broker-api-versions --bootstrap-server localhost:29092 > /dev/null 2>&1
+      interval: 5s
+      timeout: 10s
+      retries: 30
     environment:
-      <<: *broker-env
       KAFKA_NODE_ID: 6
+      KAFKA_PROCESS_ROLES: broker
+      CLUSTER_ID: ${CLUSTER_ID}
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@controller-1:9093,2@controller-2:9093,3@controller-3:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:9094
       KAFKA_ADVERTISED_LISTENERS: INTERNAL://broker-3:29092,EXTERNAL://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_HEAP_OPTS: -Xms512m -Xmx512m
     volumes: [broker-3:/var/lib/kafka/data]
 
   schema-registry:
