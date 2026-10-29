@@ -1,0 +1,145 @@
+# Lab: a small but production-shaped Confluent Platform 8.x cluster.
+#
+#   controller-1..3   KRaft quorum: cluster metadata only, no client traffic, not exposed
+#   broker-1..3       data; clients on the host use localhost:9092,localhost:9093,localhost:9094
+#   schema-registry   http://localhost:8081, stores everything in the _schemas topic
+#   kafka-ui          http://localhost:8080, browse topics (including _schemas) and subjects
+#
+# Replication is set up like production (RF 3, min.insync.replicas 2), so one broker can be
+# stopped and everything keeps working - try it.
+#
+#   docker compose -f lab/docker-compose.yml up -d        (or: cd lab && docker compose up -d)
+#   docker compose -f lab/docker-compose.yml down -v      (-v also wipes all data)
+
+name: sr-lab
+
+x-common-env: &common-env
+  CLUSTER_ID: ${CLUSTER_ID}
+  KAFKA_CONTROLLER_QUORUM_VOTERS: 1@controller-1:9093,2@controller-2:9093,3@controller-3:9093
+  KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+
+x-controller: &controller
+  image: confluentinc/cp-kafka:${CP_VERSION}
+  restart: unless-stopped
+  environment: &controller-env
+    <<: *common-env
+    KAFKA_PROCESS_ROLES: controller
+    KAFKA_LISTENERS: CONTROLLER://:9093
+    KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT
+    # controllers only hold the metadata log - a small heap is plenty
+    KAFKA_HEAP_OPTS: -Xms256m -Xmx384m
+
+x-broker: &broker
+  image: confluentinc/cp-kafka:${CP_VERSION}
+  restart: unless-stopped
+  depends_on: [controller-1, controller-2, controller-3]
+  healthcheck:
+    test: kafka-broker-api-versions --bootstrap-server localhost:29092 > /dev/null 2>&1
+    interval: 5s
+    timeout: 10s
+    retries: 30
+  environment: &broker-env
+    <<: *common-env
+    KAFKA_PROCESS_ROLES: broker
+    # INTERNAL: other containers (brokers, schema-registry, kafka-ui)   EXTERNAL: your laptop
+    KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+    KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+    KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+    KAFKA_MIN_INSYNC_REPLICAS: 2
+    KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+    KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+    KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+    # like most production clusters: topics are created on purpose, not by a typo
+    KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    KAFKA_HEAP_OPTS: -Xms512m -Xmx512m
+
+services:
+  controller-1:
+    <<: *controller
+    container_name: controller-1
+    environment: { <<: *controller-env, KAFKA_NODE_ID: 1 }
+    volumes: [controller-1:/var/lib/kafka/data]
+  controller-2:
+    <<: *controller
+    container_name: controller-2
+    environment: { <<: *controller-env, KAFKA_NODE_ID: 2 }
+    volumes: [controller-2:/var/lib/kafka/data]
+  controller-3:
+    <<: *controller
+    container_name: controller-3
+    environment: { <<: *controller-env, KAFKA_NODE_ID: 3 }
+    volumes: [controller-3:/var/lib/kafka/data]
+
+  broker-1:
+    <<: *broker
+    container_name: broker-1
+    ports: ["9092:9092"]
+    environment:
+      <<: *broker-env
+      KAFKA_NODE_ID: 4
+      KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://broker-1:29092,EXTERNAL://localhost:9092
+    volumes: [broker-1:/var/lib/kafka/data]
+  broker-2:
+    <<: *broker
+    container_name: broker-2
+    ports: ["9093:9093"]
+    environment:
+      <<: *broker-env
+      KAFKA_NODE_ID: 5
+      KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://broker-2:29092,EXTERNAL://localhost:9093
+    volumes: [broker-2:/var/lib/kafka/data]
+  broker-3:
+    <<: *broker
+    container_name: broker-3
+    ports: ["9094:9094"]
+    environment:
+      <<: *broker-env
+      KAFKA_NODE_ID: 6
+      KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:9094
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://broker-3:29092,EXTERNAL://localhost:9094
+    volumes: [broker-3:/var/lib/kafka/data]
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:${CP_VERSION}
+    container_name: schema-registry
+    restart: unless-stopped
+    depends_on:
+      broker-1: { condition: service_healthy }
+      broker-2: { condition: service_healthy }
+      broker-3: { condition: service_healthy }
+    ports: ["8081:8081"]
+    healthcheck:
+      test: curl -sf http://localhost:8081/subjects > /dev/null
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://broker-1:29092,PLAINTEXT://broker-2:29092,PLAINTEXT://broker-3:29092
+      # the topic this whole project is about: Schema Registry keeps ALL its state here
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC: _schemas
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR: 3
+      SCHEMA_REGISTRY_HEAP_OPTS: -Xms256m -Xmx512m
+
+  kafka-ui:
+    image: ghcr.io/kafbat/kafka-ui:${KAFKA_UI_VERSION}
+    container_name: kafka-ui
+    restart: unless-stopped
+    depends_on:
+      schema-registry: { condition: service_healthy }
+    ports: ["8080:8080"]
+    environment:
+      KAFKA_CLUSTERS_0_NAME: sr-lab
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: broker-1:29092,broker-2:29092,broker-3:29092
+      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
+
+volumes:
+  controller-1:
+  controller-2:
+  controller-3:
+  broker-1:
+  broker-2:
+  broker-3:
